@@ -1,0 +1,24 @@
+# Visual Studio
+.vs
+.vsidx
+.suo
+.user
+.userosscache
+.sln.docstates
+
+# .NET build artifacts
+bin
+obj
+[Dd]ebug
+[Rr]elease
+.dll
+.pdb
+
+# Python
+__pycache__
+.pyc
+.venv
+venv
+
+# Docker  env
+.env
