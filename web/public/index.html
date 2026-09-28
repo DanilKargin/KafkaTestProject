@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <title>Order Tracker — Outbox → Kafka → Inbox</title>
+  <style>
+    :root {
+      --bg: #0f1115;
+      --bg-card: #171a21;
+      --bg-elev: #1f232b;
+      --border: #2a2f3a;
+      --border-soft: #232833;
+      --text: #e6e8ec;
+      --text-dim: #9aa3b2;
+      --text-muted: #6b7280;
+      --accent: #60a5fa;
+      --accent-hover: #3b82f6;
+      --ok: #34d399;
+      --ok-bg: #0f2a22;
+      --ok-border: #1f6b53;
+      --warn: #fbbf24;
+      --warn-bg: #2a2110;
+      --warn-border: #7a5a12;
+      --err: #f87171;
+      --log-bg: #0a0d12;
+      --log-text: #a7f3d0;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+      margin: 0; padding: 24px;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+    }
+
+    h1 { margin: 0 0 4px; font-size: 22px; font-weight: 600; letter-spacing: -0.01em; }
+
+    .sub {
+      color: var(--text-dim); font-size: 13px; margin-bottom: 24px;
+    }
+
+    code {
+      background: var(--bg-elev);
+      color: var(--accent);
+      padding: 1px 6px;
+      border-radius: 4px;
+      font-size: 12px;
+      font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    }
+
+    .card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 20px;
+      margin-bottom: 20px;
+      box-shadow: 0 1px 2px rgba(0,0,0,.4);
+    }
+
+    .card h3 {
+      margin: 0 0 12px; font-size: 15px; font-weight: 600; color: var(--text);
+    }
+
+    /* Форма */
+    .create-form {
+      display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap;
+    }
+    .create-form label {
+      font-size: 12px; color: var(--text-dim);
+      display: block; margin-bottom: 4px;
+    }
+    .create-form input {
+      padding: 8px 10px;
+      background: var(--bg-elev);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text);
+      font-size: 14px;
+      width: 200px;
+      outline: none;
+      transition: border-color .15s;
+    }
+    .create-form input:focus {
+      border-color: var(--accent);
+    }
+    .create-form button {
+      padding: 9px 18px;
+      border: 0; border-radius: 6px;
+      background: var(--accent);
+      color: #0b1220;
+      font-weight: 600; cursor: pointer;
+      font-size: 14px;
+      transition: background .15s, opacity .15s;
+    }
+    .create-form button:hover { background: var(--accent-hover); color: #fff; }
+    .create-form button:disabled { opacity: .5; cursor: not-allowed; }
+
+    /* Pipeline */
+    .pipeline {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 12px; margin-top: 16px;
+    }
+    .stage {
+      border: 2px solid var(--border);
+      border-radius: 10px;
+      padding: 14px;
+      background: var(--bg-elev);
+      transition: all .3s ease;
+      position: relative;
+    }
+    .stage.done {
+      border-color: var(--ok-border);
+      background: var(--ok-bg);
+    }
+    .stage.active {
+      border-color: var(--warn-border);
+      background: var(--warn-bg);
+      animation: pulse 1.6s ease-in-out infinite;
+    }
+    .stage.pending { opacity: .45; }
+
+    @keyframes pulse {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(251,191,36,.0); }
+      50%      { box-shadow: 0 0 0 4px rgba(251,191,36,.12); }
+    }
+
+    .stage .stage-title {
+      font-size: 12px; font-weight: 600;
+      color: var(--text-dim);
+      margin-bottom: 6px;
+      text-transform: uppercase;
+      letter-spacing: .04em;
+    }
+    .stage .stage-status {
+      font-size: 14px; color: var(--text); font-weight: 500;
+    }
+    .stage.done .stage-status { color: var(--ok); }
+    .stage.active .stage-status { color: var(--warn); }
+
+    .stage .stage-meta {
+      font-size: 11px; color: var(--text-muted);
+      margin-top: 6px; word-break: break-all;
+      font-family: ui-monospace, monospace;
+      line-height: 1.5;
+    }
+
+    /* Таблица */
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td {
+      text-align: left; padding: 8px 10px;
+      border-bottom: 1px solid var(--border-soft);
+    }
+    th {
+      color: var(--text-dim); font-weight: 500; font-size: 12px;
+      text-transform: uppercase; letter-spacing: .04em;
+    }
+    td { color: var(--text); }
+    tbody tr:hover { background: rgba(96,165,250,.06); cursor: pointer; }
+    tbody tr:last-child td { border-bottom: 0; }
+
+    /* Лог */
+    .log {
+      font-family: ui-monospace, "SF Mono", Menlo, monospace;
+      font-size: 12px; line-height: 1.6;
+      background: var(--log-bg);
+      color: var(--log-text);
+      border: 1px solid var(--border);
+      padding: 12px;
+      border-radius: 8px;
+      max-height: 260px;
+      overflow-y: auto;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .log::-webkit-scrollbar { width: 8px; }
+    .log::-webkit-scrollbar-track { background: transparent; }
+    .log::-webkit-scrollbar-thumb { background: #2a2f3a; border-radius: 4px; }
+
+    .order-id-label {
+      font-size: 12px; color: var(--text-dim); margin-bottom: 12px;
+    }
+    .order-id-label code {
+      background: var(--bg-elev); color: var(--accent);
+    }
+
+    /* Скроллбар для страницы */
+    ::-webkit-scrollbar { width: 10px; height: 10px; }
+    ::-webkit-scrollbar-track { background: var(--bg); }
+    ::-webkit-scrollbar-thumb {
+      background: #2a2f3a; border-radius: 5px;
+      border: 2px solid var(--bg);
+    }
+    ::-webkit-scrollbar-thumb:hover { background: #3a4150; }
+  </style>
+</head>
+<body>
+  <h1>🧾 Order Tracker</h1>
+  <div class="sub">Проследи путь заказа: <code>orders</code> → <code>outbox</code> → Kafka → <code>inbox</code></div>
+
+  <div class="card">
+    <h3>Создать заказ</h3>
+    <div class="create-form">
+      <div>
+        <label>Сумма</label>
+        <input id="amount" type="number" value="199.99" step="0.01" />
+      </div>
+      <button id="createBtn">Создать заказ</button>
+    </div>
+    <div id="createdInfo" style="margin-top:12px;font-size:13px;color:var(--text-dim);"></div>
+  </div>
+
+  <div class="card" id="pipelineCard" style="display:none;">
+    <h3>Путь заказа</h3>
+    <div class="order-id-label">Order ID: <code id="orderIdLabel"></code></div>
+
+    <div class="pipeline">
+      <div class="stage" id="stage-db">
+        <div class="stage-title">1. БД (orders)</div>
+        <div class="stage-status">—</div>
+        <div class="stage-meta" id="meta-db"></div>
+      </div>
+      <div class="stage" id="stage-outbox">
+        <div class="stage-title">2. Outbox</div>
+        <div class="stage-status">—</div>
+        <div class="stage-meta" id="meta-outbox"></div>
+      </div>
+      <div class="stage" id="stage-kafka">
+        <div class="stage-title">3. Kafka</div>
+        <div class="stage-status">—</div>
+        <div class="stage-meta" id="meta-kafka"></div>
+      </div>
+      <div class="stage" id="stage-inbox">
+        <div class="stage-title">4. Inbox</div>
+        <div class="stage-status">—</div>
+        <div class="stage-meta" id="meta-inbox"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>Последние заказы</h3>
+    <table>
+      <thead>
+        <tr><th>ID</th><th>Сумма</th><th>Статус</th><th>Создан</th></tr>
+      </thead>
+      <tbody id="ordersBody"></tbody>
+    </table>
+  </div>
+
+  <div class="card">
+    <h3>Лог</h3>
+    <div class="log" id="log"></div>
+  </div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let currentOrderId = null;
+let pollTimer = null;
+
+function log(msg) {
+  const el = $("log");
+  const ts = new Date().toLocaleTimeString();
+  el.textContent += `[${ts}] ${msg}\n`;
+  el.scrollTop = el.scrollHeight;
+}
+
+async function createOrder() {
+  const amount = parseFloat($("amount").value);
+  if (!amount || amount <= 0) return alert("Укажите корректную сумму");
+
+  $("createBtn").disabled = true;
+  log(`Создаю заказ на сумму ${amount}...`);
+  try {
+    const r = await fetch("/api/orders", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ amount }),
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || "Ошибка");
+
+    currentOrderId = data.orderId;
+    $("orderIdLabel").textContent = data.orderId;
+    $("pipelineCard").style.display = "block";
+    $("createdInfo").textContent = `Заказ ${data.orderId} создан`;
+    log(`Заказ создан: ${data.orderId}, event: ${data.eventId}`);
+
+    startPolling();
+  } catch (e) {
+    log(`ОШИБКА: ${e.message}`);
+    alert(e.message);
+  } finally {
+    $("createBtn").disabled = false;
+  }
+}
+
+function setStage(stageId, state, statusText, metaText) {
+  const el = $(stageId);
+  el.classList.remove("done", "active", "pending");
+  el.classList.add(state);
+  el.querySelector(".stage-status").textContent = statusText;
+  $(`meta-${stageId.replace("stage-", "")}`).textContent = metaText || "";
+}
+
+async function refreshStatus() {
+  if (!currentOrderId) return;
+  try {
+    const r = await fetch(`/api/orders/${currentOrderId}`);
+    if (!r.ok) return;
+    const { order, outbox, inbox } = await r.json();
+
+    if (order) {
+      setStage("stage-db", "done", `✓ ${order.status}`,
+        `id=${order.id.slice(0,8)}… amount=${order.amount}`);
+    }
+
+    if (outbox) {
+      const isPublished = outbox.status === "PUBLISHED";
+      setStage("stage-outbox", isPublished ? "done" : "active",
+        isPublished ? "✓ PUBLISHED" : "⏳ PENDING",
+        `id=${outbox.id} created=${new Date(outbox.created_at).toLocaleTimeString()}`);
+    } else {
+      setStage("stage-outbox", "pending", "—", "нет записи");
+    }
+
+    if (outbox && outbox.status === "PUBLISHED") {
+      setStage("stage-kafka", "done", "✓ Отправлено",
+        `published_at=${new Date(outbox.published_at).toLocaleTimeString()}`);
+    } else if (outbox) {
+      setStage("stage-kafka", "pending", "—", "ждём relay");
+    } else {
+      setStage("stage-kafka", "pending", "—", "");
+    }
+
+    if (inbox) {
+      setStage("stage-inbox", "done", "✓ Обработано",
+        `key=${inbox.message_key.slice(0,8)}… processed=${new Date(inbox.processed_at).toLocaleTimeString()}`);
+      if (pollTimer) { clearInterval(pollTimer); pollTimer = null; log("Заказ полностью обработан ✓"); }
+    } else if (outbox && outbox.status === "PUBLISHED") {
+      setStage("stage-inbox", "active", "⏳ Ждём consumer", "");
+    } else {
+      setStage("stage-inbox", "pending", "—", "");
+    }
+  } catch (e) {
+    log(`Ошибка обновления: ${e.message}`);
+  }
+}
+
+function startPolling() {
+  if (pollTimer) clearInterval(pollTimer);
+  refreshStatus();
+  pollTimer = setInterval(refreshStatus, 1500);
+}
+
+async function loadOrders() {
+  try {
+    const r = await fetch("/api/orders");
+    const rows = await r.json();
+    $("ordersBody").innerHTML = rows.map(o => `
+      <tr onclick="selectOrder('${o.id}')">
+        <td><code>${o.id.slice(0,8)}…</code></td>
+        <td>${o.amount}</td>
+        <td>${o.status}</td>
+        <td>${new Date(o.created_at).toLocaleString()}</td>
+      </tr>
+    `).join("") || `<tr><td colspan="4" style="color:var(--text-muted);">Пока нет заказов</td></tr>`;
+  } catch (e) {
+    console.error(e);
+  }
+}
+
+window.selectOrder = (id) => {
+  currentOrderId = id;
+  $("orderIdLabel").textContent = id;
+  $("pipelineCard").style.display = "block";
+  startPolling();
+};
+
+$("createBtn").addEventListener("click", createOrder);
+loadOrders();
+setInterval(loadOrders, 5000);
+</script>
+</body>
+</html>

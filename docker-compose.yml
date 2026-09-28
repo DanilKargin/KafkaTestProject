@@ -86,6 +86,21 @@ services:
       GROUP_ID: demo-group
       PG_CONN: "host=postgres port=5432 dbname=demo user=demo password=demo"
     restart: unless-stopped
-
+  web:
+    build:
+      context: ./web
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PGHOST: postgres
+      PGPORT: 5432
+      PGUSER: demo
+      PGPASSWORD: demo
+      PGDATABASE: demo
+      PORT: 3000
+    ports:
+      - "3000:3000"
+    restart: unless-stopped
 volumes:
   pgdata:

@@ -29,21 +29,21 @@ namespace producer.Workers
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
-            _log.LogInformation("OrderWorker старт.");
-            while (!stoppingToken.IsCancellationRequested)
-            {
-                var delay = _rnd.Next(_options.MinDelaySeconds, _options.MaxDelaySeconds + 1);
-                try
-                {
-                    await Task.Delay(TimeSpan.FromSeconds(delay), stoppingToken);
-                    await _orderService.CreateOrderAsync(stoppingToken);
-                }
-                catch (OperationCanceledException) { break; }
-                catch (Exception ex)
-                {
-                    _log.LogError(ex, "Ошибка в OrderWorker");
-                }
-            }
+            //_log.LogInformation("OrderWorker старт.");
+            //while (!stoppingToken.IsCancellationRequested)
+            //{
+            //    var delay = _rnd.Next(_options.MinDelaySeconds, _options.MaxDelaySeconds + 1);
+            //    try
+            //    {
+            //        await Task.Delay(TimeSpan.FromSeconds(delay), stoppingToken);
+            //        await _orderService.CreateOrderAsync(stoppingToken);
+            //    }
+            //    catch (OperationCanceledException) { break; }
+            //    catch (Exception ex)
+            //    {
+            //        _log.LogError(ex, "Ошибка в OrderWorker");
+            //    }
+            //}
         }
     }
 }
