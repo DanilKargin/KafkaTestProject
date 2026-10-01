@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <title>Order Tracker — схема Outbox</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header>
+    <div class="header-inner">
+      <div class="logo">🧾 Order<span>Tracker</span></div>
+      <nav class="nav">
+        <a href="index.html">⚡ Демонстрация</a>
+        <a href="diagram.html" class="active">📐 Схема Outbox</a>
+      </nav>
+    </div>
+  </header>
+
+  <div class="wrap">
+    <h1>Паттерн Transactional Outbox</h1>
+    <div class="sub">Как гарантировать доставку события в Kafka без dual-write и потери сообщений</div>
+
+    <div class="card">
+        <h2>Поток данных</h2>
+        <div class="diagram-wrap">
+            <div class="flow">
+                <!-- Бизнес-операция -->
+                <div class="node accent">
+                    <div class="node-title">
+                        <div class="node-icon">🛒</div>
+                        OrderService
+                    </div>
+                    <div class="node-sub">создаёт заказ<br />в фоне / по кнопке</div>
+                </div>
+
+                <div class="arrow-h"><span>→</span></div>
+
+                <!-- БД с двумя таблицами -->
+                <div class="node ok">
+                    <div class="node-title">
+                        <div class="node-icon">🗄️</div>
+                        PostgreSQL
+                    </div>
+                    <div class="node-sub">
+                        INSERT orders<br />
+                        INSERT outbox (PENDING)
+                    </div>
+                </div>
+
+                <div class="arrow-h"><span>→</span></div>
+
+                <!-- Relay -->
+                <div class="node warn">
+                    <div class="node-title">
+                        <div class="node-icon">🔄</div>
+                        Outbox Relay
+                    </div>
+                    <div class="node-sub">
+                        читает PENDING<br />
+                        шлёт в Kafka
+                    </div>
+                </div>
+
+                <div class="arrow-h"><span>→</span></div>
+
+                <!-- Kafka -->
+                <div class="node">
+                    <div class="node-title">
+                        <div class="node-icon">📨</div>
+                        Kafka
+                    </div>
+                    <div class="node-sub">
+                        demo-topic<br />
+                        idempotent
+                    </div>
+                </div>
+
+                <div class="arrow-h"><span>→</span></div>
+
+                <!-- Consumer -->
+                <div class="node accent">
+                    <div class="node-title">
+                        <div class="node-icon">⚙️</div>
+                        Consumer
+                    </div>
+                    <div class="node-sub">
+                        проверяет inbox<br />
+                        обрабатывает
+                    </div>
+                </div>
+
+                <div class="arrow-h"><span>→</span></div>
+
+                <!-- Inbox -->
+                <div class="node ok">
+                    <div class="node-title">
+                        <div class="node-icon">📥</div>
+                        Inbox
+                    </div>
+                    <div class="node-sub">
+                        message_key<br />
+                        UNIQUE
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="note">
+            <strong>Ключевая идея:</strong> запись бизнес-данных и запись события в outbox происходят
+            в <strong>одной локальной транзакции БД</strong>. Отправкой в Kafka занимается отдельный процесс —
+            relay. Это устраняет dual-write.
+        </div>
+    </div>
+
+    <div class="card">
+      <h2>Пошаговый разбор</h2>
+      <div class="steps">
+        <div class="step">
+          <div class="step-title"><span class="step-num">1</span>Создание заказа</div>
+          <div class="step-desc">
+            <code>OrderService</code> начинает транзакцию БД и делает два INSERT'а:
+            в <code>orders</code> (бизнес-факт) и в <code>outbox</code> (намерение опубликовать).
+            Либо оба, либо ни одного.
+          </div>
+        </div>
+
+        <div class="step warn">
+          <div class="step-title"><span class="step-num">2</span>Чтение outbox</div>
+          <div class="step-desc">
+            <code>Outbox Relay</code> читает записи со статусом <code>PENDING</code>
+          </div>
+        </div>
+
+        <div class="step warn">
+          <div class="step-title"><span class="step-num">3</span>Публикация в Kafka</div>
+          <div class="step-desc">
+            Relay отправляет сообщение в <code>demo-topic</code> с
+            <code>enable.idempotence=true</code>. Ключ = id outbox-записи,
+            чтобы повторная отправка не создала дубль.
+          </div>
+        </div>
+
+        <div class="step ok">
+          <div class="step-title"><span class="step-num">4</span>Пометка PUBLISHED</div>
+          <div class="step-desc">
+            После успешной отправки relay делает
+            <code>UPDATE outbox SET status='PUBLISHED'</code>.
+            Если упал между шагами 3 и 4 — при рестарте отправит снова,
+            но брокер отбросит дубль.
+          </div>
+        </div>
+
+        <div class="step ok">
+          <div class="step-title"><span class="step-num">5</span>Проверка inbox</div>
+          <div class="step-desc">
+            Consumer перед обработкой делает
+            <code>INSERT INTO inbox ... ON CONFLICT DO NOTHING</code>.
+            Если ключ уже есть — пропускает сообщение и коммитит offset.
+          </div>
+        </div>
+
+        <div class="step ok">
+          <div class="step-title"><span class="step-num">6</span>Обработка и commit</div>
+          <div class="step-desc">
+            Бизнес-логика склада выполняется <strong>в той же транзакции</strong>,
+            что и запись в inbox. Только после коммита БД делается
+            <code>consumer.commit()</code>.
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Какие проблемы решает</h2>
+      <div class="two-col">
+        <div class="problem">
+          <div class="title">❌ Dual-write</div>
+          Запись в БД прошла, отправка в Kafka упала → событие потеряно.<br/>
+          Отправка прошла, транзакция БД откатилась → фантомное сообщение.
+        </div>
+        <div class="solution">
+          <div class="title">✅ Outbox</div>
+          Бизнес-данные и намерение отправить пишутся в одной транзакции.
+          Relay гарантированно доставит событие в Kafka (at-least-once).
+        </div>
+
+        <div class="problem">
+          <div class="title">❌ Повторная обработка</div>
+          Обработка прошла, но commit offset'а упал → после рестарта
+          сообщение придёт снова → действие выполнится дважды.
+        </div>
+        <div class="solution">
+          <div class="title">✅ Inbox</div>
+          Ключ сообщения пишется в <code>inbox</code> с UNIQUE-ограничением.
+          Дубликат отбрасывается, offset коммитится без повторной обработки.
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Гарантии доставки</h2>
+      <table>
+        <thead>
+          <tr><th>Этап</th><th>Гарантия</th><th>Механизм</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Запись в БД</td>
+            <td><span class="badge ok">atomic</span></td>
+            <td>Транзакция БД: orders + outbox</td>
+          </tr>
+          <tr>
+            <td>Доставка в Kafka</td>
+            <td><span class="badge warn">at-least-once</span></td>
+            <td>Relay + idempotent producer</td>
+          </tr>
+          <tr>
+            <td>Обработка в consumer</td>
+            <td><span class="badge ok">effectively once</span></td>
+            <td>Inbox + UNIQUE constraint</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <div class="note">
+        <strong>Важно:</strong> exactly-once в Kafka — это только про запись в брокер,
+        а не про обработку во внешней системе. Комбинация
+        <em>at-least-once delivery + идемпотентная обработка</em>
+        даёт <strong>эффективную exactly-once обработку</strong> на уровне бизнес-логики.
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Схема БД</h2>
+      <table>
+        <thead>
+          <tr><th>Таблица</th><th>Назначение</th><th>Ключевые поля</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>orders</code></td>
+            <td>Бизнес-данные</td>
+            <td>id, customer_id, amount, status, created_at</td>
+          </tr>
+          <tr>
+            <td><code>outbox</code></td>
+            <td>Очередь событий для отправки</td>
+            <td>id, aggregate_id, event_type, payload, status, published_at</td>
+          </tr>
+          <tr>
+            <td><code>inbox</code></td>
+            <td>Обработанные сообщения (идемпотентность)</td>
+            <td>message_key (UNIQUE), processed_at</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="card" style="text-align:center;">
+      <a href="index.html" style="
+        display:inline-block; padding:10px 24px;
+        background:var(--accent); color:#0b1220;
+        border-radius:8px; text-decoration:none;
+        font-weight:600; font-size:14px;
+      ">⚡ Перейти к демонстрации</a>
+    </div>
+  </div>
+</body>
+</html>
